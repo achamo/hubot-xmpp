@@ -11,12 +11,15 @@ class XmppBot extends Adapter
       host: process.env.HUBOT_XMPP_HOST
       port: process.env.HUBOT_XMPP_PORT
       rooms:    @parseRooms process.env.HUBOT_XMPP_ROOMS.split(',')
+      rooms_array:  []
       keepaliveInterval: 30000 # ms interval to send whitespace to xmpp server
       legacySSL: process.env.HUBOT_XMPP_LEGACYSSL
       preferredSaslMechanism: process.env.HUBOT_XMPP_PREFERRED_SASL_MECHANISM
 
+
     @robot.logger.info util.inspect(options)
     options.password = process.env.HUBOT_XMPP_PASSWORD
+    options.rooms_array = @arrayRooms(options.rooms)
 
     @client = new Xmpp.Client
       reconnect: true
@@ -74,6 +77,12 @@ class XmppBot extends Adapter
         jid:      room.slice(0, if index > 0 then index else room.length)
         password: if index > 0 then room.slice(index+1) else false
     return rooms
+
+  arrayRooms: (rooms) ->
+    array = []
+    for room in rooms
+      array.push room.jid
+    return array
 
   # XMPP Joining a room - http://xmpp.org/extensions/xep-0045.html#enter-muc
   joinRoom: (room) ->
@@ -140,14 +149,16 @@ class XmppBot extends Adapter
     return if from == @robot.name or from == @options.username or from is undefined
 
     # note that 'from' isn't a full JID, just the local user part
-    user = @robot.brain.userForId from
+    user = @robot.brain.userForId "#{room}/#{from}"
     user.type = stanza.attrs.type
     user.room = room
 
     @receive new TextMessage(user, message)
 
   readPresence: (stanza) =>
+
     jid = new Xmpp.JID(stanza.attrs.from)
+
     bareJid = jid.bare().toString()
 
     # xmpp doesn't add types for standard available mesages
@@ -155,10 +166,11 @@ class XmppBot extends Adapter
     # presences for all members
     # http://xmpp.org/rfcs/rfc3921.html#rfc.section.2.2.1
     stanza.attrs.type ?= 'available'
+    room_presence = (bareJid in @options.rooms_array ? 1 : 0)
 
     # Parse a stanza and figure out where it came from.
     getFrom = (stanza) =>
-      if bareJid not in @options.rooms
+      if bareJid not in @options.rooms_array
         from = stanza.attrs.from
       else
         # room presence is stupid, and optional for some anonymous rooms
@@ -191,28 +203,30 @@ class XmppBot extends Adapter
         from = getFrom(stanza)
         return if not from?
 
-        [room, from] = from.split '/'
+        [from, location] = from.split '/'
+        [room, nickname] = jid.toString().split '/'
 
         # ignore presence messages that sometimes get broadcast
-        return if not @messageFromRoom room
+        return if not room_presence
 
         # If the presence is from us, track that.
         # Xmpp sends presence for every person in a room, when join it
         # Only after we've heard our own presence should we respond to
         # presence messages.
+        heardOwnPresence = false
         if from == @robot.name or from == @options.username
-          @heardOwnPresence = true
+          heardOwnPresence = true
           return
-
-        return unless @heardOwnPresence
 
         @robot.logger.debug "Availability received for #{from}"
 
-        user = @robot.brain.userForId from, room: room, jid: jid.toString()
+        user = @robot.brain.userForId jid.toString(), room: room, jid: from
+        @robot.brain.save()
         @receive new EnterMessage user
 
       when 'unavailable'
         from = getFrom(stanza)
+        from = stanza.attrs.from if not from?
 
         [room, from] = from.split '/'
 
