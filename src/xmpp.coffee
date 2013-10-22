@@ -205,6 +205,7 @@ class XmppBot extends Adapter
 
         [from, location] = from.split '/'
         [room, nickname] = jid.toString().split '/'
+        [name, host] = from.split '@'
 
         # ignore presence messages that sometimes get broadcast
         return if not room_presence
@@ -220,7 +221,7 @@ class XmppBot extends Adapter
 
         @robot.logger.debug "Availability received for #{from}"
 
-        user = @robot.brain.userForId jid.toString(), room: room, jid: from
+        user = @robot.brain.userForId jid.toString(), room: room, jid: from, name: name
         @robot.brain.save()
         @receive new EnterMessage user
 
@@ -238,7 +239,7 @@ class XmppBot extends Adapter
 
         @robot.logger.debug "Unavailability received for #{from}"
 
-        user = @robot.brain.userForId from, room: room, jid: jid.toString()
+        user = @robot.brain.userForId from, room: room, jid: jid.toString(), name: jid.toString()
         @receive new LeaveMessage(user)
 
   # Checks that the room parameter is a room the bot is in.
